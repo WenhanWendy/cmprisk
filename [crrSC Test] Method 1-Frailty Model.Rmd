@@ -1,0 +1,157 @@
+---
+title: "Simulations_WL"
+author: "Wenhan Lu"
+output: html_document
+---
+##Install Packages
+
+```{r,warning=FALSE,message=FALSE}
+#Check the package 'crrSC', if it does not exist in the environment, then install it.
+if (!require("crrSC")) install.packages("crrSC")
+library(crrSC)
+
+#Check the package 'parallel', if it does not exist in the environment, then install it.
+if (!require("parallel")) install.packages("parallel")
+library(parallel)
+
+#Check the package 'numbers', if it does not exist in the environment, then install it.
+if (!require("numbers")) install.packages("numbers")
+library(numbers)
+
+#Check the package 'mvtnorm', if it does not exist in the environment, then install it.
+if (!require("mvtnorm")) install.packages("mvtnorm")
+library(mvtnorm)
+
+#Check the package 'survival', if it does not exist in the environment, then install it.
+if (!require("survival")) install.packages("survival")
+library(survival)
+
+#Check the package 'frailtypack', if it does not exist in the environment, then install it.
+if (!require("frailtypack")) install.packages("frailtypack")
+library(frailtypack)
+```
+
+
+###Simulation Function for Method 1
+
+```{r}
+Sims.crrc.m1 <- function(seed = 12345, m=5, n=5500, clstr=80, beta, q = 40/12 , event, drop,tau){
+  
+  set.seed(seed)
+  pb<-txtProgressBar(min=0,max=m,style=3)
+  result <- vector()
+  
+  for(i in 1:m){
+    #Calculate overall drop-off rate
+    dropall <- dropall<-drop*(1+(1-event-drop)+(1-event-drop)^2+(1/3)*(1-event-drop)^3)
+  
+    #draw random values from standard normal distribution
+    y<-rnorm(n)
+    u<-pnorm(y) 
+  
+    #generate cluster indicator with random cluster size
+    cluster<-sample(1:clstr,n,replace=TRUE,prob = runif(clstr,0.1,0.9))
+  
+    #If a is the shape parameter of gamma distribution, Kendall's tau=1/(2*a+1)
+    a<-0.5*(1/tau-1)
+    #let rate parameter=shape parameter in order to make mean of frailty (gamma random values)=1
+    b<-a
+  
+    #generate the frailty for each cluster
+    z<-rgamma(clstr,a,b)
+    temp <- data.frame(cluster = 1:clstr,z)
+  
+    #calculate lambda for exponential distribution
+    lambda<-b/((1-event)^(1/a))-b 
+  
+    #calcualte parameter for drop-off censoring
+    theta<-(0.5/(dropall*lambda))*(1+1/exp(beta))*(b/a)
+  
+    #Build up dataset
+    mydata1 <- data.frame(u,cluster)
+    mydata1$x <- mydata1$cluster%%2
+    mydata1 <- merge(mydata1,temp,by = 'cluster',all.x = T)
+  
+    #generate the event time from an exponential distribution
+    mydata1$time_t<-(-(log(mydata1$u))/(exp(mydata1$x*beta)*mydata1$z*lambda)) 
+  
+    #generate observed time (which we will use in analysis) and censoring indicator based on event time, 
+    #drop-off censoring, and administrative censoring
+    mydata1$time_c <- runif(n,min=0,max=theta)
+    mydata1$time_o <- apply(mydata1[,5:6],1,min) # Observed time is the minimum of event time and censoring time
+    mydata1$status1 <- as.integer(mydata1$time_o == mydata1$time_t)# Drop-off censoring
+    mydata1$status2 <- as.integer(mydata1$time_o <= q)#administrative censoring
+    mydata1$time_o[!mydata1$status2] <- q
+  
+    #Indicator of censoring for observed time. status=1 means event; status=0 means censoring
+    mydata1$status <- mydata1$status1*mydata1$status2
+  
+    ##################################
+    ########### checking #############
+    ##################################
+  
+    ##### check event and censoring rates #####
+    #fall<-mean(mydata1$status) #the actual overall fall rate
+    #censoring<-1-mean(mydata1$status) #the actual overall censoring rate, which is the combination of drop-off and cut-off rate
+    #dropoff<-1-mean(mydata1$status1) #the drop-off rate
+    #cutoff<-1-mean(mydata1$status2) #the administrative censoring rate
+  
+    ##### check denpendence #####
+    #temp1 <- t(sapply(1:clstr,function(i){sample(mydata1[mydata1$cluster==i,5],2,replace=F)}))
+    #sample1 <- data.frame(temp1,cluster = 1:clstr,censoring = rep(c(1,0),clstr/2))
+    #temp2 <- t(sapply(1:clstr,function(i){sample(mydata1[mydata1$cluster==i,7],2,replace=F)}))
+    #sample2 <- data.frame(temp2,cluster = 1:clstr,censoring = rep(c(1,0),clstr/2))
+  
+    #tau1<-cor(sample1[,1:2],method = "kendall")[1,2]  
+    #tau2<-cor(sample2[,1:2],method = "kendall")[1,2]  
+
+    #rho1<-cor(sample1[,1:2],method = "pearson")[1,2]
+    #rho2<-cor(sample2[,1:2],method = "pearson")[1,2]
+  
+    ##### check predicted Hazard Ratio in crrc model from 'crrSC' Package #####
+    model <- crrc(ftime=mydata1$time_o,fstatus=mydata1$status,cov1=mydata1$x,cluster=mydata1$cluster)
+  
+    #Create matrix to store simulation results
+    #temp <-c(fall,censoring,dropoff,cutoff,tau1,tau2,rho1,rho2,model$coef,model3$converged)
+    temp <- c(m,n,clstr,beta,q,event,drop,tau,model$coef,model$converged)
+    result <- rbind(result,temp)
+    setTxtProgressBar(pb,i)
+  }
+  
+  #colnames(result) <- c("fall","censoring","dropoff","cutoff","tau1","tau2","rho1","rho2","crrc.coef","crrc.converge")
+  colnames(result) <- c("m","n","clstr","beta","q","event","drop","tau","crrc.coef","crrc.converge")
+  rownames(result) <- 1:nrow(result)
+  return(result)
+}
+```
+
+###Here we use fixed n, clstr and q. Generate different values of tau, event rate and drop-off rate.
+```{r}
+tau <- seq(0.01,0.1,0.01)
+drop <- seq(0.01,0.1,0.01)
+event <- seq(0.01,0.2,0.02)
+L <- length(drop)
+K <- length(tau)
+P <- length(event)
+```
+
+
+```{r}
+result <- vector()
+pb0<-txtProgressBar(min=0,max=L,style=3)
+
+for (l in 1:L) {
+  for(k in 1:K){
+    for(p in 1:P){
+      temp1 <- Sims.crrc.m1(n=5500, clstr=80, beta=log(0.8), q = 40/12 , event=0.14, drop=drop[l],tau=tau[k])
+      temp2 <- apply(temp1,2,mean)
+      result <- rbind(result,temp1,mean = temp2)
+      print(paste((l-1)*K*P+(k-1)*P+p,"th senario completed"))
+    }
+  }
+   setTxtProgressBar(pb0,l)
+}
+
+```
+
+

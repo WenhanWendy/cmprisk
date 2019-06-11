@@ -58,11 +58,14 @@ dropall<-drop*(1+(1-event-drop)+(1-event-drop)^2+(1/3)*(1-event-drop)^3) #overal
 
 result<-matrix(,m,10)
 
-pb<-txtProgressBar(min=0,max=m,style=3)
+colnames(result) <- c("fall","censoring","dropoff","cutoff","tau1","tau2","rho1","rho2","cox.coef","frailty.coef")
+
 ```
 
 ###Simulations
 ```{r}
+pb<-txtProgressBar(min=0,max=m,style=3)
+
 for (j in 1:m) {
 
 y<-rnorm(n) #draw random values from standard normal distribution
@@ -111,25 +114,20 @@ mydata1$status <- mydata1$status1*mydata1$status2
 
 ##### check event and censoring rates #####
 
-fall<-summary(mydata1$status)[4] #the actual overall fall rate
-fall
-censoring<-1-summary(mydata1$status)[4] #the actual overall censoring rate, which is the combination of drop-off and cut-off rate
-censoring
-dropoff<-1-summary(mydata1$status1)[4] #the drop-off rate
-dropoff
-cutoff<-1-summary(mydata1$status2)[4] #the administrative censoring rate
-cutoff
+fall<-mean(mydata1$status) #the actual overall fall rate
+censoring<-1-mean(mydata1$status) #the actual overall censoring rate, which is the combination of drop-off and cut-off rate
+dropoff<-1-mean(mydata1$status1) #the drop-off rate
+cutoff<-1-mean(mydata1$status2) #the administrative censoring rate
+
 
 ##### check denpendence #####
 
-sample1<-mydata1.frame(matrix(,clstr,4))
-sample2<-mydata1.frame(matrix(,clstr,4))
-for (jj in 1:clstr) {
-  seq1<-sample(mydata1[mydata1$cluster==jj,5],2,replace=F) #sample from time_t
-  sample1[jj,]<-c(seq1,jj,mean(mydata1[mydata1$cluster==jj,2]))
-  seq2<-sample(mydata1[mydata1$cluster==jj,7],2,replace=F) #sample from time_o
-  sample2[jj,]<-c(seq2,jj,mean(mydata1[mydata1$cluster==jj,2]))
-}  
+
+temp1 <- t(sapply(1:clstr,function(i){sample(mydata1[mydata1$cluster==i,5],2,replace=F)}))
+sample1 <- data.frame(temp1,cluster = 1:clstr,censoring = rep(c(1,0),clstr/2))
+temp2 <- t(sapply(1:clstr,function(i){sample(mydata1[mydata1$cluster==i,7],2,replace=F)}))
+sample2 <- data.frame(temp2,cluster = 1:clstr,censoring = rep(c(1,0),clstr/2))
+
 tau1<-cor(sample1[,1:2],method = "kendall")[1,2]  
 tau2<-cor(sample2[,1:2],method = "kendall")[1,2]  
 
@@ -142,11 +140,12 @@ s<-Surv(mydata1$time_o,mydata1$status)
 
 model1<-coxph(s~as.factor(mydata1$x))
 
-model2<-frailtyPenal(s~as.factor(mydata1$x)+cluster(mydata1$cluster),n.knots = 7,kappa = 10000, mydata1=mydata1, RandDist = "Gamma",maxit=50)
+model2<-frailtyPenal(s~as.factor(mydata1$x)+cluster(mydata1$cluster),n.knots = 7,kappa = 10000, data=mydata1, RandDist = "Gamma",maxit=50)
 
 result[j,]<-c(fall,censoring,dropoff,cutoff,tau1,tau2,rho1,rho2,model1$coef,model2$coef)
 setTxtProgressBar(pb,j)
 }
+
 ```
 
 
